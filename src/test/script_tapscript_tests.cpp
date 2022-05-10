@@ -244,17 +244,15 @@ BOOST_AUTO_TEST_CASE(eval_checksigadd_basic_checks)
 
     private:
         std::string Descr() {
+            std::array<char, 24> sline{0};
             std::string_view svline("");
+            // (This seems rather elaborate to avoid locale issues with `std::to_string`. One
+            // can't help but think the C++ committee could have provided a nicer wrapper for it.)
+            if (auto [ptr,ec] = std::to_chars(sline.data(), sline.data() + sline.size(),
+                                            callerLine);
+                ec == std::errc())
             {
-                // (This seems rather elaborate to avoid locale issues with `std::to_string`. One
-                // can't help but think the C++ committee could have provided a nicer wrapper for it.)
-                std::array<char, 24> sline{0};
-                if (auto [ptr,ec] = std::to_chars(sline.data(), sline.data() + sline.size(),
-                                                callerLine);
-                    ec == std::errc())
-                {
-                    svline = std::string_view(sline.data(), ptr - sline.data());
-                }
+                svline = std::string_view(sline.data(), ptr - sline.data());
             }
 
             std::string descr;
@@ -419,7 +417,7 @@ BOOST_AUTO_TEST_CASE(eval_checksigadd_basic_checks)
 // message to distinguish between different asserts, and the line number field
 // of the exception is not set either.)
 //
-// N.B.: Apparently doesn't work with MSVC.  Looking at Boost's
+// N.B.: Apparently doesn't work with MSVC or MINGW.  Looking at Boost's
 // `execution_monitor.ipp` it seems like it _should_ work: the code there
 // takes the structured exception from the `assert` and changes it to a
 // `boost::execution exception`.  But, apparently it doesn't: the Bitcoin
@@ -427,8 +425,7 @@ BOOST_AUTO_TEST_CASE(eval_checksigadd_basic_checks)
 // no functional tests]` prints the assert and then aborts.
 //
 // N.B.: Apparently doesn't work with the ThreadSanitizer, which doesn't like
-// an unsafe call inside of a signal handler.  That's due to the Boost signal
-// handler for SIGABRT.
+// an unsafe call inside of the Boost Test signal handler.
 #define BOOST_CHECK_SIGABRT(expr) \
 { \
     ::boost::execution_monitor exmon; \
@@ -441,7 +438,7 @@ BOOST_AUTO_TEST_CASE(eval_checksigadd_basic_checks)
 }
 
 // Test case "handle_missing_data" tests whether an `assert` function is hit.
-// This case only runs when _not_ compiled with MSVC _and not_ under the Thread
+// This case only runs when _not_ under Windows _and not_ under the Thread
 // Sanitizer.
 #if defined(__has_feature)
 #  if __has_feature(thread_sanitizer)
@@ -449,7 +446,11 @@ BOOST_AUTO_TEST_CASE(eval_checksigadd_basic_checks)
 #  endif
 #endif
 
-#if !defined(_MSC_VER) && !defined(THREAD_SANITIZER_IN_PLAY)
+#if defined(_MSC_VER) || defined(__MINGW32__)
+#  define OS_IS_WINDOWS 1
+#endif
+
+#if !defined(THREAD_SANITIZER_IN_PLAY) && !defined(OS_IS_WINDOWS)
 #  define OK_TO_TEST_ASSERT_FUNCTION 1
 #endif
 
