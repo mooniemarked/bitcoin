@@ -16,14 +16,30 @@
 
 #include <univalue.h>
 
+#include <array>
+#include <charconv>
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 /*DSB*/#include <iostream>
 
 namespace {
+
+/**
+ * Invokes undefined behavior.  See `std::unreachable` in C++23.
+ */
+[[noreturn]] inline void declare_unreachable()
+{
+#ifdef _MSC_VER
+    __assume(false);
+#else
+    // Assume all other compilers than MSVC implement this GCC builtin.
+    __builtin_unreachable();
+#endif
+}
 
 /**
  * For these tests don't need _real_ signature/pubkey validation.  That is
@@ -59,13 +75,13 @@ public:
           *serror = SCRIPT_ERR_SCHNORR_SIG;
           return false;
       }
-      __builtin_unreachable();
+      declare_unreachable();
   }
 };
 
 } // anon namespace
 
-BOOST_FIXTURE_TEST_SUITE(script_taproot_tests, BasicTestingSetup)
+BOOST_FIXTURE_TEST_SUITE(script_tapscript_tests, BasicTestingSetup)
 
 typedef std::vector<unsigned char> valtype;
 
@@ -228,11 +244,24 @@ BOOST_AUTO_TEST_CASE(eval_checksigadd_basic_checks)
 
     private:
         std::string Descr() {
+            std::string_view svline("");
+            {
+                // (This seems rather elaborate to avoid locale issues with `std::to_string`. One
+                // can't help but think the C++ committee could have provided a nicer wrapper for it.)
+                std::array<char, 24> sline{0};
+                if (auto [ptr,ec] = std::to_chars(sline.data(), sline.data() + sline.size(),
+                                                callerLine);
+                    ec == std::errc())
+                {
+                    svline = std::string_view(sline.data(), ptr - sline.data());
+                }
+            }
+
             std::string descr;
             descr.reserve(testDescription.size() + 20);
             descr += testDescription;
             descr += " (@";
-            descr += std::to_string(callerLine);
+            descr += svline;
             descr += ")";
             return descr;
         }
@@ -383,19 +412,6 @@ BOOST_AUTO_TEST_CASE(eval_checksigadd_basic_checks)
     }
 }
 
-
-static bool HandleMissingData(MissingDataBehavior mdb)
-{
-    switch (mdb) {
-        case MissingDataBehavior::ASSERT_FAIL:
-            assert(!"missing data");
-            break;
-        case MissingDataBehavior::FAIL:
-            return false;
-    }
-    assert(!"Unknown MissingDataBehavior value");
-}
-
 // `assert` statement signals SIGABRT - this macro succeeds iff that SIGABRT is
 // raised. (Could be a false positive if code signals SIGABRT for _some other
 // reason than calling `assert`; also if some _other_ `system_error` is
@@ -403,11 +419,16 @@ static bool HandleMissingData(MissingDataBehavior mdb)
 // message to distinguish between different asserts, and the line number field
 // of the exception is not set either.)
 //
-// TODO: Need to test this with MSVC++ - looking at the code in Boost's
-// `execution_monitor.ipp` it looks to me like it handles the MSVC++ `assert`
-// structured exception by reflecting it in the same way as Linux: via a
-// `boost:execution_exception` with code `system_error`, but this needs to be
-// verified.
+// N.B.: Apparently doesn't work with MSVC.  Looking at Boost's
+// `execution_monitor.ipp` it seems like it _should_ work: the code there
+// takes the structured exception from the `assert` and changes it to a
+// `boost::execution exception`.  But, apparently it doesn't: the Bitcoin
+// repository CI pipeline for `win64 [unit tests, no gui tests, no boost::process,
+// no functional tests]` prints the assert and then aborts.
+//
+// N.B.: Apparently doesn't work with the ThreadSanitizer, which doesn't like
+// an unsafe call inside of a signal handler.  That's due to the Boost signal
+// handler for SIGABRT.
 #define BOOST_CHECK_SIGABRT(expr) \
 { \
     ::boost::execution_monitor exmon; \
@@ -419,6 +440,20 @@ static bool HandleMissingData(MissingDataBehavior mdb)
     ); \
 }
 
+// Test case "handle_missing_data" tests whether an `assert` function is hit.
+// This case only runs when _not_ compiled with MSVC _and not_ under the Thread
+// Sanitizer.
+#if defined(__has_feature)
+#  if __has_feature(thread_sanitizer)
+#    define THREAD_SANITIZER_IN_PLAY 1
+#  endif
+#endif
+
+#if !defined(_MSC_VER) && !defined(THREAD_SANITIZER_IN_PLAY)
+#  define OK_TO_TEST_ASSERT_FUNCTION 1
+#endif
+
+#if defined(OK_TO_TEST_ASSERT_FUNCTION)
 BOOST_AUTO_TEST_CASE(handle_missing_data)
 {
     // `HandleMissingData` is a static free function inside of `interpreter.cpp`.
@@ -429,7 +464,7 @@ BOOST_AUTO_TEST_CASE(handle_missing_data)
     // N.B.: This is somewhat fragile.  We are just finding a path through
     // `SignatureHashSchnorr` that definitely gets to `HandleMissingData`. If
     // the code in `SignatureHashSchnorr` changes for whatever reason the
-    // setup code below may not longer pick out that path.
+    // setup code below may no longer pick out that path.
 
     // Here we pick an acceptable SigVersion
     SigVersion sigversion = SigVersion::TAPROOT;
@@ -461,5 +496,6 @@ BOOST_AUTO_TEST_CASE(handle_missing_data)
                                              hash_type, sigversion, cache,
                                              static_cast<MissingDataBehavior>(25)));
 }
+#endif
 
 BOOST_AUTO_TEST_SUITE_END()
