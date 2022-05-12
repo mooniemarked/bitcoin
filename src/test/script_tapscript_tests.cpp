@@ -2,21 +2,16 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <test/data/script_tests.json.h>
-#include <test/data/bip341_wallet_vectors.json.h>
-
 #include <hash.h>
 #include <script/interpreter.h>
 #include <script/script.h>
 #include <script/script_error.h>
 #include <test/util/setup_common.h>
 #include <test/util/transaction_utils.h>
-
-#include <boost/version.hpp>
-#include <boost/test/unit_test.hpp>
-#include <boost/test/execution_monitor.hpp>
-
 #include <univalue.h>
+
+#include <boost/test/execution_monitor.hpp>
+#include <boost/test/unit_test.hpp>
 
 #include <array>
 #include <charconv>
@@ -26,8 +21,8 @@
 #include <limits>
 #include <ostream>
 #include <set>
-#include <string>
 #include <string_view>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
