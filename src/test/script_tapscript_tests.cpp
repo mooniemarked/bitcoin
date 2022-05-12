@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2021 The Bitcoin Core developers
+// Copyright (c) 2011-2022 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -922,6 +922,7 @@ BOOST_AUTO_TEST_CASE(signature_hash_schnorr_assert_cases)
 
     ScriptExecutionData execdata;
     execdata.m_annex_init = true;
+    execdata.m_annex_hash = uint256::ZERO;
 
     uint256 hash_out {0};
 
@@ -958,6 +959,7 @@ BOOST_AUTO_TEST_CASE(signature_hash_schnorr_assert_cases)
         const SigVersion sigversion = SigVersion::TAPSCRIPT;
         ScriptExecutionData execdata;
         execdata.m_annex_init = true;
+        execdata.m_annex_hash = uint256::ZERO;
         execdata.m_tapleaf_hash_init = false;
         execdata.m_codeseparator_pos_init = true;
         BOOST_CHECK_SIGABRT(!SignatureHashSchnorr(hash_out, execdata, tx_to_m,
