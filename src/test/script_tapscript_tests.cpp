@@ -490,6 +490,8 @@ BOOST_AUTO_TEST_CASE(signature_hash_schnorr_failure_cases)
 
     ScriptExecutionData execdata;
     execdata.m_annex_init = true;
+    execdata.m_annex_present = false;
+    execdata.m_annex_hash = uint256::ZERO;
     execdata.m_tapleaf_hash_init = false;
     execdata.m_codeseparator_pos_init = true;
 
@@ -917,6 +919,7 @@ BOOST_AUTO_TEST_CASE(signature_hash_schnorr_assert_cases)
 
     ScriptExecutionData execdata;
     execdata.m_annex_init = true;
+    execdata.m_annex_present = false;
     execdata.m_annex_hash = uint256::ZERO;
 
     uint256 hash_out {0};
@@ -954,6 +957,7 @@ BOOST_AUTO_TEST_CASE(signature_hash_schnorr_assert_cases)
         const SigVersion sigversion = SigVersion::TAPSCRIPT;
         ScriptExecutionData execdata;
         execdata.m_annex_init = true;
+        execdata.m_annex_present = false;
         execdata.m_annex_hash = uint256::ZERO;
         execdata.m_tapleaf_hash_init = false;
         execdata.m_codeseparator_pos_init = true;
