@@ -851,7 +851,7 @@ BOOST_AUTO_TEST_CASE(signature_hash_schnorr)
 // These tests use the Boost Test `execution_monitor` facility to trap signals,
 // specifically: SIGABRT (which is raised by the `assert` statement - iff Linux!).
 // The execution monitor will trap signals and reflect them as exceptions.  (So
-// these aren't really "full" death tests à la Googletest as it is not trapping
+// these aren't really "full" death tests Ã  la Googletest as it is not trapping
 // hard faults like calling through a null pointer.  But we don't actually need
 // that so it's fine.)
 //
