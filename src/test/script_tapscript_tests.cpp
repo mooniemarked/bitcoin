@@ -924,8 +924,8 @@ BOOST_AUTO_TEST_CASE(check_schnorr_signature)
 
         using MutableTransactionSignatureChecker::MutableTransactionSignatureChecker;
 
-        enum class if_as_expected_return { FALSE, TRUE };
-        if_as_expected_return iae{ if_as_expected_return::TRUE };
+        enum class if_as_expected_return { False, True };
+        if_as_expected_return iae{ if_as_expected_return::True };
         void SetExpectation(if_as_expected_return iaer) { iae = iaer; }
 
         bool VerifySchnorrSignature(Span<const unsigned char> sig,
@@ -936,7 +936,7 @@ BOOST_AUTO_TEST_CASE(check_schnorr_signature)
             // BOOST_TEST_MESSAGE("MockVerifySchnorrSignature: sighash == " << sighash.ToString());
 
             bool as_expected = sighash == expected_sighash;
-            if (iae == if_as_expected_return::TRUE)
+            if (iae == if_as_expected_return::True)
                 return as_expected;
             else
                 return !as_expected;
@@ -1034,7 +1034,7 @@ BOOST_AUTO_TEST_CASE(check_schnorr_signature)
             // Now `SignatureHashSchnorr1 will return true but we'll fail `VerifySchnorrSignature`
             // and show it returns the correct error.
             MockVerifyingTransactionSignatureChecker sut(&txToIn, in_pos, {}, txDataIn, MissingDataBehavior::FAIL);
-            sut.SetExpectation(MockVerifyingTransactionSignatureChecker::if_as_expected_return::FALSE);
+            sut.SetExpectation(MockVerifyingTransactionSignatureChecker::if_as_expected_return::False);
             ScriptError serror{SCRIPT_ERR_OK};
             BOOST_TEST(!sut.CheckSchnorrSignature(triplet.sig, triplet.pubkey, SigVersion::TAPROOT, execdata, &serror));
             BOOST_TEST(serror == SCRIPT_ERR_SCHNORR_SIG);
@@ -1043,7 +1043,7 @@ BOOST_AUTO_TEST_CASE(check_schnorr_signature)
             // Finally, same as previous, except we'll force `VerifySchnorrSignature` to succeed and
             // show now that `CheckSchnorrSignature` finally suceeds.
             MockVerifyingTransactionSignatureChecker sut(&txToIn, in_pos, {}, txDataIn, MissingDataBehavior::FAIL);
-            sut.SetExpectation(MockVerifyingTransactionSignatureChecker::if_as_expected_return::TRUE);
+            sut.SetExpectation(MockVerifyingTransactionSignatureChecker::if_as_expected_return::True);
             ScriptError serror{SCRIPT_ERR_OK};
             BOOST_TEST(sut.CheckSchnorrSignature(triplet.sig, triplet.pubkey, SigVersion::TAPROOT, execdata, &serror));
             BOOST_TEST(serror == SCRIPT_ERR_OK);
