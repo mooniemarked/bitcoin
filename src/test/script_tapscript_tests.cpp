@@ -782,7 +782,8 @@ BOOST_AUTO_TEST_CASE(signature_hash_schnorr)
         // to `SignatureHashSchnorr` in the `PrecomputedTransactionData` struct.
         if (hash_input_type == SIGHASH_ANYONECANPAY) {
             hasher << tx_input_at_pos_prevout;
-            hasher << spent_output_at_pos;
+            hasher << spent_output_at_pos.nValue;
+            hasher << spent_output_at_pos.scriptPubKey;
             hasher << tx_input_at_pos_nsequence;
         } else {
             hasher << in_pos;
