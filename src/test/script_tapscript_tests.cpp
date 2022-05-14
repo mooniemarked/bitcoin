@@ -3,16 +3,19 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <hash.h>
+#include <pubkey.h>
 #include <script/interpreter.h>
 #include <script/script.h>
 #include <script/script_error.h>
 #include <test/util/setup_common.h>
 #include <test/util/transaction_utils.h>
+#include <util/strencodings.h>
 #include <univalue.h>
 
 #include <boost/test/execution_monitor.hpp>
 #include <boost/test/unit_test.hpp>
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cstddef>
@@ -187,7 +190,7 @@ BOOST_AUTO_TEST_CASE(eval_checksigadd_basic_checks)
         uint32_t flags = 0;
         CScript script;
         ScriptError err = SCRIPT_ERR_OK;
-        std::vector<std::vector<unsigned char>> stack;
+        std::vector<valtype> stack;
         ScriptExecutionData execdata;
         SignatureCheckerMock sigchecker;
         int64_t callerLine = 0;
@@ -837,6 +840,217 @@ BOOST_AUTO_TEST_CASE(signature_hash_schnorr)
                    << " == actual " << actual_hash_out.ToString());
     }
 }
+
+namespace {
+
+// Valid Schnoor (pubkey, msg, signature) tuples (copied from `key_tests.cpp`)
+
+struct SchnorrTriplet
+{
+    SchnorrTriplet(std::string pubkey, std::string sighash, std::string sig)
+                : pubkey(ParseHex(pubkey))
+                , sighash(uint256(ParseHex(sighash)))
+                , sig(ParseHex(sig)) {}
+    valtype pubkey;
+    uint256 sighash;
+    valtype sig;
+};
+
+static const std::vector<SchnorrTriplet> SCHNORR_TRIPLETS = {
+    {"F9308A019258C31049344F85F89D5229B531C845836F99B08601F113BCE036F9", "0000000000000000000000000000000000000000000000000000000000000000", "E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0"},
+    {"DFF1D77F2A671C5F36183726DB2341BE58FEAE1DA2DECED843240F7B502BA659", "243F6A8885A308D313198A2E03707344A4093822299F31D0082EFA98EC4E6C89", "6896BD60EEAE296DB48A229FF71DFE071BDE413E6D43F917DC8DCF8C78DE33418906D11AC976ABCCB20B091292BFF4EA897EFCB639EA871CFA95F6DE339E4B0A"},
+    {"DD308AFEC5777E13121FA72B9CC1B7CC0139715309B086C960E18FD969774EB8", "7E2D58D8B3BCDF1ABADEC7829054F90DDA9805AAB56C77333024B9D0A508B75C", "5831AAEED7B44BB74E5EAB94BA9D4294C49BCF2A60728D8B4C200F50DD313C1BAB745879A5AD954A72C45A91C3A51D3C7ADEA98D82F8481E0E1E03674A6F3FB7"},
+    {"25D1DFF95105F5253C4022F628A996AD3A0D95FBF21D468A1B33F8C160D8F517", "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", "7EB0509757E246F19449885651611CB965ECC1A187DD51B64FDA1EDC9637D5EC97582B9CB13DB3933705B32BA982AF5AF25FD78881EBB32771FC5922EFC66EA3"},
+    {"D69C3509BB99E412E68B0FE8544E72837DFA30746D8BE2AA65975F29D22DC7B9", "4DF3C3F68FCC83B27E9D42C90431A72499F17875C81A599B566C9889B9696703", "00000000000000000000003B78CE563F89A0ED9414F5AA28AD0D96D6795F9C6376AFB1548AF603B3EB45C9F8207DEE1060CB71C04E80F593060B07D28308D7F4"},
+};
+
+}
+
+BOOST_AUTO_TEST_CASE(validate_schnorr_testdata)
+{
+    for (const auto& triplet : SCHNORR_TRIPLETS) {
+        BOOST_TEST(XOnlyPubKey(triplet.pubkey).VerifySchnorr(triplet.sighash, triplet.sig));
+    }
+}
+
+BOOST_AUTO_TEST_CASE(validate_schnorr_signature)
+{
+    // Defeat, for test purposes, the protected access of
+    // `GenericTransactionSignatureChecker::VerifySchnorrSignature`
+    struct UnprotectedTransactionSignatureChecker : public MutableTransactionSignatureChecker
+    {
+        using MutableTransactionSignatureChecker::MutableTransactionSignatureChecker;
+        using MutableTransactionSignatureChecker::VerifySchnorrSignature;
+    };
+    UnprotectedTransactionSignatureChecker sut{nullptr, 0, {}, {}};
+
+    // Positive tests: triplets which verify
+    for (const auto& triplet : SCHNORR_TRIPLETS) {
+        BOOST_TEST(sut.VerifySchnorrSignature(triplet.sig,
+                                              XOnlyPubKey{triplet.pubkey},
+                                              triplet.sighash));
+    }
+
+    // Negative tests: triplets which fail to verify (get these failing triplets
+    // by modifying a valid triplet, one field at a time)
+    auto diddle_front_byte = [](auto v) { v[0]++; return v; };
+    auto& triplet = SCHNORR_TRIPLETS[0];
+    BOOST_TEST(!sut.VerifySchnorrSignature(diddle_front_byte(triplet.sig),
+                                           XOnlyPubKey{triplet.pubkey},
+                                           triplet.sighash));
+    BOOST_TEST(!sut.VerifySchnorrSignature(triplet.sig,
+                                           XOnlyPubKey{diddle_front_byte(triplet.pubkey)},
+                                           triplet.sighash));
+    BOOST_TEST(!sut.VerifySchnorrSignature(triplet.sig,
+                                           XOnlyPubKey{triplet.pubkey},
+                                           uint256::ONE));
+}
+
+BOOST_AUTO_TEST_CASE(check_schnorr_signature)
+{
+    // Provide, for test purposes, a subclass of `GenericTransactionsSignatureChecker`
+    // that mocks `VerifySchnorrSignature` so we can more easily test
+    // `CheckSchnorrSignature` without going to the trouble of having a valid
+    // transaction (which is unnecessary for this _unit_ test.)
+    struct MockVerifyingTransactionSignatureChecker : public MutableTransactionSignatureChecker
+    {
+
+        uint256 expected_sighash = [](){
+            uint256 h{};
+            // This is the known sighash of the Tx and input data we set up (precomputed)
+            h.SetHex("f614d8ae6dcc49e2ca2ef1c03f93c7326189e5575d446e825e5a2700fb1cb83c");
+            return h;
+        }();
+
+        using MutableTransactionSignatureChecker::MutableTransactionSignatureChecker;
+
+        enum class if_as_expected_return { FALSE, TRUE };
+        if_as_expected_return iae{ if_as_expected_return::TRUE };
+        void SetExpectation(if_as_expected_return iaer) { iae = iaer; }
+
+        bool VerifySchnorrSignature(Span<const unsigned char> sig,
+                                    const XOnlyPubKey& pubkey,
+                                    const uint256& sighash) const override
+        {
+            // Following line used only to determine the known canned `expected_sighash` above:
+            // BOOST_TEST_MESSAGE("MockVerifySchnorrSignature: sighash == " << sighash.ToString());
+
+            bool as_expected = sighash == expected_sighash;
+            if (iae == if_as_expected_return::TRUE)
+                return as_expected;
+            else
+                return !as_expected;
+        };
+    };
+
+    const auto triplet = SCHNORR_TRIPLETS[0];
+    const CMutableTransaction txToIn{};
+    ScriptExecutionData execdata{};
+
+    {
+        // Signature must be 64 or 65 bytes long
+        for (size_t i = 0; i <= 99; i++) {
+            valtype testsig(i, i);
+            if (testsig.size() == 64 || testsig.size() == 65) continue;
+            MockVerifyingTransactionSignatureChecker sut(&txToIn, 0, {}, MissingDataBehavior::FAIL);
+            ScriptError serror{SCRIPT_ERR_OK};
+            BOOST_TEST(!sut.CheckSchnorrSignature(testsig, triplet.pubkey, SigVersion::TAPROOT, execdata, &serror));
+            BOOST_TEST(serror == SCRIPT_ERR_SCHNORR_SIG_SIZE);
+        }
+    }
+
+    {
+        // Iff signature is 65 bytes long last byte must **NOT** be SIGHASH_DEFAULT (0x00) per BIP-342
+        {
+            // Negative test: last byte _is_ SIGHASH_DEFAULT
+            valtype testsig(65, 65);
+            testsig.back() = SIGHASH_DEFAULT;
+
+            MockVerifyingTransactionSignatureChecker sut(&txToIn, 0, {}, MissingDataBehavior::FAIL);
+            ScriptError serror{SCRIPT_ERR_OK};
+            BOOST_TEST(!sut.CheckSchnorrSignature(testsig, triplet.pubkey, SigVersion::TAPROOT, execdata, &serror));
+            BOOST_TEST(serror == SCRIPT_ERR_SCHNORR_SIG_HASHTYPE);
+        }
+        {
+            // Negative tests: last byte is _not_ SIGHASH_DEFAULT, but we early exit _without changing
+            // serror_ because we don't provide a txDataIn (🡄 this requires knowledge of how
+            // `CheckSchnorrSignature` is written).
+            for (size_t i = 1; i <= 255; i++) {
+                valtype testsig(65, i);
+
+                MockVerifyingTransactionSignatureChecker sut(&txToIn, 0, {}, MissingDataBehavior::FAIL);
+                ScriptError serror{SCRIPT_ERR_OK};
+                BOOST_TEST(!sut.CheckSchnorrSignature(testsig, triplet.pubkey, SigVersion::TAPROOT, execdata, &serror));
+                BOOST_TEST(serror == SCRIPT_ERR_OK);
+            }
+        }
+    }
+
+    {
+        // Now check that, given the parameters, if `SignatureHashSchnorr fails there's an error exit.
+        // Otherwise, if it succeeds, it proceeds to call `VerifySchnorrSignature` and depending on
+        // _that_ result `SignatureHashSchnorr` either succeeds or fails.
+        //
+        // We do this using the mocked `VerifySchnorrSignature` so we only need to pass parameters
+        // that work with `SignatureHashSchnorr`, they don't _also_ have to validate with
+        // `VerifySchnorrSignature`.
+
+        const uint32_t in_pos{0};
+        CMutableTransaction txToIn{};
+        txToIn.nVersion = 0;
+        txToIn.nLockTime = 0;
+        txToIn.vin.push_back(CTxIn());
+        txToIn.vin[in_pos].prevout = COutPoint(uint256::ZERO, 0);
+        txToIn.vin[in_pos].nSequence = 0;
+        txToIn.vout.push_back(CTxOut());
+
+        PrecomputedTransactionData txDataIn{};
+        txDataIn.m_bip341_taproot_ready = true;
+        txDataIn.m_prevouts_single_hash = uint256::ZERO;
+        txDataIn.m_spent_amounts_single_hash = uint256::ZERO;
+        txDataIn.m_spent_scripts_single_hash = uint256::ZERO;
+        txDataIn.m_sequences_single_hash = uint256::ZERO;
+        txDataIn.m_spent_outputs_ready = true;
+        txDataIn.m_spent_outputs.push_back(CTxOut());
+        txDataIn.m_spent_outputs[in_pos].nValue = 0;
+        txDataIn.m_spent_outputs[in_pos].scriptPubKey << OP_DUP << OP_CHECKSIG;
+        txDataIn.m_outputs_single_hash = uint256::ZERO;
+
+        ScriptExecutionData execdata{};
+        execdata.m_annex_init = true;
+        execdata.m_annex_present = true;
+        execdata.m_annex_hash = uint256::ZERO;
+        execdata.m_output_hash.reset();
+
+        {
+            // Confirm that we can force `SignatureHashSchnorr` to fail (via an early exit)
+            PrecomputedTransactionData txDataIn{};
+            MockVerifyingTransactionSignatureChecker sut(&txToIn, in_pos, {}, txDataIn, MissingDataBehavior::FAIL);
+            ScriptError serror{SCRIPT_ERR_OK};
+            BOOST_TEST(!sut.CheckSchnorrSignature(triplet.sig, triplet.pubkey, SigVersion::TAPROOT, execdata, &serror));
+            BOOST_TEST(serror == SCRIPT_ERR_SCHNORR_SIG_HASHTYPE);
+        }
+        {
+            // Now `SignatureHashSchnorr1 will return true but we'll fail `VerifySchnorrSignature`
+            // and show it returns the correct error.
+            MockVerifyingTransactionSignatureChecker sut(&txToIn, in_pos, {}, txDataIn, MissingDataBehavior::FAIL);
+            sut.SetExpectation(MockVerifyingTransactionSignatureChecker::if_as_expected_return::FALSE);
+            ScriptError serror{SCRIPT_ERR_OK};
+            BOOST_TEST(!sut.CheckSchnorrSignature(triplet.sig, triplet.pubkey, SigVersion::TAPROOT, execdata, &serror));
+            BOOST_TEST(serror == SCRIPT_ERR_SCHNORR_SIG);
+        }
+        {
+            // Finally, same as previous, except we'll force `VerifySchnorrSignature` to succeed and
+            // show now that `CheckSchnorrSignature` finally suceeds.
+            MockVerifyingTransactionSignatureChecker sut(&txToIn, in_pos, {}, txDataIn, MissingDataBehavior::FAIL);
+            sut.SetExpectation(MockVerifyingTransactionSignatureChecker::if_as_expected_return::TRUE);
+            ScriptError serror{SCRIPT_ERR_OK};
+            BOOST_TEST(sut.CheckSchnorrSignature(triplet.sig, triplet.pubkey, SigVersion::TAPROOT, execdata, &serror));
+            BOOST_TEST(serror == SCRIPT_ERR_OK);
+        }
+    }
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 // DEATH TESTS ONLY PAST THIS POINT
