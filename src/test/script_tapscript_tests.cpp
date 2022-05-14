@@ -1072,13 +1072,20 @@ namespace {
             std::copy(sv.begin(), sv.end(), begin());
         }
 
-        using std::vector<unsigned char>::operator[];
-        bytevector operator[](std::tuple<size_t, size_t> range) const {
-            auto [i, j] = range;
+        /**
+         * Return half-open subrange from byte vector: `[i:j)`
+         */
+        bytevector subrange(size_t i, size_t j) const {
             assert(i <= j && j <= size());
             bytevector r(j-i, 0);
             std::copy(begin()+i, begin()+j, r.begin());
             return r;
+        }
+
+        using std::vector<unsigned char>::operator[];
+        bytevector operator[](std::tuple<size_t, size_t> range) const {
+            auto [i, j] = range;
+            return subrange(i, j);
         }
 
         std::string to_string() const {
@@ -1093,6 +1100,10 @@ namespace {
             return lhs == rhs.to_string();
         }
     };
+
+    bytevector operator ""_bv(const char* s, size_t len) {
+        return bytevector(std::string_view(s, len));
+    }
 
     bytevector operator||(const bytevector& lhs, const bytevector& rhs)
     {
@@ -1130,6 +1141,40 @@ BOOST_AUTO_TEST_CASE(bytevector_helper)
 
 BOOST_AUTO_TEST_CASE(compute_taproot_merkle_root)
 {
+    // Test by using a small enhancement to a `vector<unsigned char>` that makes
+    // it easy to convert to/from strings so the tests are more easily readable,
+    // and also adds directly the two necessary operations from BIP-340: byte
+    // vector concatenation and byte vector select subrange.
+
+    //                  ".........|.........|.........|..."      33 bytes
+    const auto point1 = "[point (#1) - 33 bytes of junk!!>"_bv;
+    const auto point2 = "[point (#2) - 33 more bad bytes!>"_bv;
+    //                  ".........|.........|.........|.."       32 bytes
+    const auto node1 = "<this is node 1:  a useless str>"_bv;
+    const auto node2 = "<node 2 is this: it is not good>"_bv;
+    const auto nodeL = "<two similar nodes, relation: 0>"_bv;
+    const auto nodeG = "<two similar nodes, relation: 9>"_bv;
+
+    const auto tap1h = "{tapleaf root 1: bit randomness}"_bv;
+    const auto tap2h = "{tapleaf root 2: bot randomisch}"_bv;
+
+    const CHashWriter hw_branch{TaggedHash("TapBranch")};
+
+    {
+        // Control block contains only the initial point, no nodes - always returns
+        // the taproot hash, doesn't matter what the control block is
+        uint256 tlh1 = uint256{tap1h};
+        auto expected1 = tlh1;
+        auto actual1a = ComputeTaprootMerkleRoot(point1, tlh1);
+        BOOST_TEST(expected1 == actual1a);
+        auto actual1b = ComputeTaprootMerkleRoot(point2, tlh1);
+        BOOST_TEST(expected1 == actual1b);
+        uint256 tlh2 = uint256{tap2h};
+        auto expected2 = tlh2;
+        auto actual2 = ComputeTaprootMerkleRoot(point2, tlh2);
+        BOOST_TEST(expected2 == actual2);
+    }
+
 }
 
 
