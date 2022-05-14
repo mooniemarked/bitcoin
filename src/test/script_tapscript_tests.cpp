@@ -26,10 +26,12 @@
 #include <set>
 #include <string_view>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
+using namespace std::literals::string_literals;
 using namespace std::literals::string_view_literals;
 
 namespace {
@@ -1050,6 +1052,84 @@ BOOST_AUTO_TEST_CASE(check_schnorr_signature)
             BOOST_TEST(serror == SCRIPT_ERR_OK);
         }
     }
+}
+
+namespace {
+
+    // An attempt to get close to the notation of BIP-340:
+    //   `||` concatenates byte vectors
+    //   `[j]` indexes a single element
+    //   `[i:j]` can't be represented in C++ - there is no `:` operator, so instead
+    //       I substitute `[{i,j}]` - which is the subrange `[i,j)`.
+    //
+    // For convenience, constructing from a string and comparing (equality) against
+    // a string are available.
+    struct bytevector : public std::vector<unsigned char>
+    {
+        using std::vector<unsigned char>::vector;
+        explicit bytevector(std::string_view sv) {
+            resize(sv.size());
+            std::copy(sv.begin(), sv.end(), begin());
+        }
+
+        using std::vector<unsigned char>::operator[];
+        bytevector operator[](std::tuple<size_t, size_t> range) const {
+            auto [i, j] = range;
+            assert(i <= j && j <= size());
+            bytevector r(j-i, 0);
+            std::copy(begin()+i, begin()+j, r.begin());
+            return r;
+        }
+
+        std::string to_string() const {
+            return std::string(begin(), end());
+        }
+
+        friend bool operator==(const bytevector& lhs, std::string_view rhs) {
+            return lhs.to_string() == rhs;
+        }
+
+        friend bool operator==(std::string_view lhs, const bytevector& rhs) {
+            return lhs == rhs.to_string();
+        }
+    };
+
+    bytevector operator||(const bytevector& lhs, const bytevector& rhs)
+    {
+        bytevector r;
+        r.resize(lhs.size() + rhs.size());
+        std::copy(rhs.begin(), rhs.end(),
+                  std::copy(lhs.begin(), lhs.end(), r.begin()));
+        return r;
+    }
+}
+
+BOOST_AUTO_TEST_CASE(bytevector_helper)
+{
+    bytevector rr("ABCDEFG"s);
+
+    BOOST_TEST((rr == "ABCDEFG"s));
+    BOOST_TEST(("ABCDEFG"s == rr));
+    BOOST_TEST(!(rr == "ABCDEFX"s));
+    BOOST_TEST(!("ABCDEFX"s == rr));
+
+    for (size_t n = 0; n <= 7; n++) {
+        for (size_t i = 0; i < rr.size() - n + 1; i++) {
+            std::string expected;
+            for (size_t j = i; j < i+n; j++) expected += rr[j];
+            BOOST_TEST((expected == rr[{i,i+n}]),
+                        "i " << i << ", n " << n << ", \"" << expected << "\"");
+        }
+    }
+
+    BOOST_TEST(((rr[{2,2}] || rr) == rr));
+    BOOST_TEST(((rr || rr[{4,4}]) == rr));
+    BOOST_TEST(((rr||rr) == "ABCDEFGABCDEFG"s));
+    BOOST_TEST(((bytevector("ABCD") || bytevector("-") || bytevector("1234")) == "ABCD-1234"s));
+}
+
+BOOST_AUTO_TEST_CASE(compute_taproot_merkle_root)
+{
 }
 
 
