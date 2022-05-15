@@ -1056,6 +1056,46 @@ BOOST_AUTO_TEST_CASE(check_schnorr_signature)
 
 namespace {
 
+    std::optional<valtype> to_bytes(std::string_view sv) {
+        auto is_hex_digit = [](char c) {
+            static const std::string hex_digits{"0123456789abcdefABCDEF"};
+            return std::string::npos != hex_digits.find(c);
+        };
+
+        // validate
+        if (sv.size() % 2 != 0) return {};
+        if (!std::all_of(sv.begin(), sv.end(), is_hex_digit)) return {};
+
+        auto to_binary_from_hex_digit = [](char c) -> unsigned char {
+            if ('0' <= c && c <= '9') return c - '0';
+            if ('A' <= c && c <= 'F') return c - 'A' + 10;
+            return c - 'a' + 10;
+        };
+
+        valtype r; r.reserve(sv.size() / 2);
+        for (size_t i = 0; i < sv.size(); i+=2) {
+            unsigned char high = to_binary_from_hex_digit(sv[i]);
+            unsigned char low = to_binary_from_hex_digit(sv[i+1]);
+            r.push_back(high<<4 | low);
+        }
+        return r;
+    }
+
+    template <typename C>
+    std::string to_hex(C container) {
+        auto to_hex_digit = [](unsigned char c) {
+            if (c < 10) return c + '0';
+            return c - 10 + 'A';
+        };
+
+        std::string r; r.reserve(container.size() * 2);
+        for (unsigned char c : container) {
+            r.push_back(to_hex_digit(c>>4 & 0x0F));
+            r.push_back(to_hex_digit(c & 0x0F));
+        }
+        return r;
+    }
+
     // An attempt to get close to the notation of BIP-340:
     //   `||` concatenates byte vectors
     //   `[j]` indexes a single element
@@ -1099,6 +1139,7 @@ namespace {
         friend bool operator==(std::string_view lhs, const bytevector& rhs) {
             return lhs == rhs.to_string();
         }
+
     };
 
     bytevector operator ""_bv(const char* s, size_t len) {
@@ -1139,6 +1180,11 @@ BOOST_AUTO_TEST_CASE(bytevector_helper)
     BOOST_TEST(((bytevector("ABCD") || bytevector("-") || bytevector("1234")) == "ABCD-1234"s));
 }
 
+BOOST_AUTO_TEST_CASE(compute_tapleaf_hash)
+{
+    ////// TODO
+}
+
 BOOST_AUTO_TEST_CASE(compute_taproot_merkle_root)
 {
     // Test by using a small enhancement to a `vector<unsigned char>` that makes
@@ -1149,32 +1195,46 @@ BOOST_AUTO_TEST_CASE(compute_taproot_merkle_root)
     //                  ".........|.........|.........|..."      33 bytes
     const auto point1 = "[point (#1) - 33 bytes of junk!!>"_bv;
     const auto point2 = "[point (#2) - 33 more bad bytes!>"_bv;
-    //                  ".........|.........|.........|.."       32 bytes
-    const auto node1 = "<this is node 1:  a useless str>"_bv;
-    const auto node2 = "<node 2 is this: it is not good>"_bv;
-    const auto nodeL = "<two similar nodes, relation: 0>"_bv;
-    const auto nodeG = "<two similar nodes, relation: 9>"_bv;
 
-    const auto tap1h = "{tapleaf root 1: bit randomness}"_bv;
-    const auto tap2h = "{tapleaf root 2: bot randomisch}"_bv;
+    // Lexicographically: '<' < '[' < '{'
+    //                  ".........|.........|.........|.."       32 bytes
+    const auto node1 = "<tapleaf root 1: bit randomness>"_bv;
+    const auto node2 = "[this is node 1:  a useless str]"_bv;
+    const auto node3 = "{tapleaf root 2: bot randomisch}"_bv;
+
 
     const CHashWriter hw_branch{TaggedHash("TapBranch")};
 
     {
         // Control block contains only the initial point, no nodes - always returns
         // the taproot hash, doesn't matter what the control block is
-        uint256 tlh1 = uint256{tap1h};
+        uint256 tlh1 = uint256{node1};
         auto expected1 = tlh1;
         auto actual1a = ComputeTaprootMerkleRoot(point1, tlh1);
         BOOST_TEST(expected1 == actual1a);
         auto actual1b = ComputeTaprootMerkleRoot(point2, tlh1);
         BOOST_TEST(expected1 == actual1b);
-        uint256 tlh2 = uint256{tap2h};
+        uint256 tlh2 = uint256{node3};
         auto expected2 = tlh2;
         auto actual2 = ComputeTaprootMerkleRoot(point2, tlh2);
         BOOST_TEST(expected2 == actual2);
     }
 
+    {
+        // Control block contains one node - check both lexicographic orders
+        CHashWriter hw1{hw_branch};
+        uint256 u256_1 = uint256(node1);
+        auto control_block = point1 || node2;
+        auto expected = (hw1 << u256_1 << Span{node2}).GetSHA256();
+        auto actual = ComputeTaprootMerkleRoot(control_block, u256_1);
+        BOOST_TEST(expected == actual);
+
+        CHashWriter hw2{hw_branch};
+        uint256 u256_3 = uint256(node3);
+        expected = (hw2 << Span{node2} << u256_3).GetSHA256();
+        actual = ComputeTaprootMerkleRoot(control_block, u256_3);
+        BOOST_TEST(expected == actual);
+    }
 }
 
 
